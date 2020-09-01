@@ -1,0 +1,463 @@
+#!/usr/bin/env bash
+
+set -u
+
+# export WORK_WORKSPACES_PATH="/f"
+
+export LOG_LEVEL="${LOG_LEVEL:-info}"
+
+__log_info() {
+  >&2 echo "# $1"
+}
+__log() {
+  >&2 echo "# $1"
+}
+__log_debug() {
+  if [ "$LOG_LEVEL" == "debug" ]; then
+    >&2 echo "# $1"
+  fi
+}
+__log_error() {
+  >&2 echo "# $1"
+}
+
+__gitlab_api() {
+  curl -fskL --header "PRIVATE-TOKEN: $GITLAB_TOKEN" $GITLAB_BASE_URL/api/v4/$1
+}
+
+__parse() {
+
+export git_web_url=""
+export git_url=""
+export git_proto=""
+export git_user=""
+export git_port=""
+export git_host=""
+export git_path=""
+
+git_url=$1
+
+git_prefix="git@"
+git_suffix=".git"
+
+if [[ $1 =~ ^git ]]; then
+  git_proto="git@"
+  git_full_path="${git_url#$git_prefix}"
+  git_full_path="${git_full_path%$git_suffix}"
+  git_host="${git_full_path%%:*}"
+  git_path="${git_full_path##*:}"
+
+  git_user=""
+  git_port=""
+fi
+if [[ $1 =~ ^http ]]; then
+  export git_proto="$(echo $1 | grep :// | sed -e's,^\(.*://\).*,\1,g')"
+  export git_full_path=${git_url#*//}
+  export git_full_path=${git_full_path%$git_suffix}
+  export git_host="${git_full_path%%\/*}"
+  export git_path="${git_full_path##${git_host}\/}"
+  export git_user="$(echo $git_url | grep @ | cut -d@ -f1)"
+  export git_port="$(echo $git_host | sed -e 's,^.*:,:,g' -e 's,.*:\([0-9]*\).*,\1,g' -e 's,[^0-9],,g')"
+fi
+export git_web_url="https://$git_host/${git_path%.git}"
+export git_url="${git_url}"
+export git_proto="${git_proto}"
+export git_user="${git_user}"
+export git_port="${git_port}"
+export git_host="${git_host}"
+export git_path="${git_path%$git_suffix}"
+# echo -e "\t# parse $1"
+
+__log_debug "parsing $1"
+__log_debug "git_url=$git_url"
+__log_debug "git_proto=$git_proto"
+__log_debug "git_user=$git_user"
+__log_debug "git_host=$git_host"
+__log_debug "git_port=$git_port"
+__log_debug "git_path=$git_path"
+__log_debug "git_web_url=$git_web_url"
+}
+
+__open() {
+  __log_info "opening $@"
+  if [[ "$OSTYPE" == "linux-gnu" ]]; then
+    open $@
+  elif [[ "$OSTYPE" == "darwin"* ]]; then
+    open $@
+  elif [[ "$OSTYPE" == "cygwin" ]]; then
+    start $@
+  elif [[ "$OSTYPE" == "msys" ]]; then
+    start $@
+  elif [[ "$OSTYPE" == "win32" ]]; then
+    start $@
+  fi
+}
+__xclip() {
+  # __log_info "xclip $@"
+  if [[ "$OSTYPE" == "linux-gnu" ]]; then
+    echo "$@" | xclip -selection clipboard
+  fi
+}
+
+_check_dir() {
+  # echo "# checking $1"
+  target=$1
+  if [ ! -e "$target/.git" ]; then
+    __log_error "This is not a git repository"
+    return
+  fi
+
+  IFS='/' read -r -a split_path_array <<< "$target"
+  host="${split_path_array[2]}"
+  path=""
+  for index in "${!split_path_array[@]}"
+  do
+    # echo "$index ${split_path_array[index]}"
+    if [ $index -gt 2 ]; then
+      if [ -z "$path" ]; then
+        path="${split_path_array[index]}"
+      else
+        path="$path/${split_path_array[index]}"
+      fi
+    fi
+  done
+  project_name=$(basename $path)
+  namespace="${path%/$project_name}"
+  # echo "target_host=$host"
+  # echo "namespace=$namespace"
+  # echo "project_name=$project_name"
+  git_remote_url=$(git -C $target config remote.origin.url)
+  __parse $git_remote_url
+
+  repair_cmd="git remote set-url origin https://${host}/${path}.git"
+  git -C $target fetch --quiet
+  if [ ! $? -eq 0 ]
+  then
+    __log_error "Failure $target" >&2
+    __parse $git_remote_url 1
+    __log_error "repair it ? ${repair_cmd}"
+    # exit 1
+  else
+    __log "pulling $target"
+    git -C $target pull --quiet
+  fi
+  if [ "$host" != "$git_host" ]; then
+    __log_error "$target host error" >&2
+    __log_error "host=$host" >&2
+    # echo "# git_host=$git_host" >&2
+    __parse $git_remote_url 1
+    __log_error "repair it ? ${repair_cmd}"
+    # exit 1
+  fi
+  if [ "$path" != "$git_path" ]; then
+    __log_error "$target path error" >&2
+    __log_error "path=$path" >&2
+    # echo "# git_path=$git_path" >&2
+    __parse $git_remote_url 1
+    __log_error "repair it ? ${repair_cmd}"
+    # exit 1
+  fi
+  # echo "$target OK!"
+}
+
+_status_dir() {
+  # echo "# checking $1"
+  target=$1
+  if [ ! -e "$target/.git" ]; then
+    __log_error "This is not a git repository"
+    return
+  fi
+
+  IFS='/' read -r -a split_path_array <<< "$target"
+  host="${split_path_array[2]}"
+  path=""
+  for index in "${!split_path_array[@]}"
+  do
+    # echo "$index ${split_path_array[index]}"
+    if [ $index -gt 2 ]; then
+      if [ -z "$path" ]; then
+        path="${split_path_array[index]}"
+      else
+        path="$path/${split_path_array[index]}"
+      fi
+    fi
+  done
+  project_name=$(basename $path)
+  namespace="${path%/$project_name}"
+  # echo "target_host=$host"
+  # echo "namespace=$namespace"
+  # echo "project_name=$project_name"
+  git_remote_url=$(git -C $target config remote.origin.url)
+  __parse $git_remote_url
+
+  repair_cmd="git remote set-url origin https://${host}/${path}.git"
+  git -C $target fetch --quiet
+
+
+  if [[ `git -C $target status --porcelain` ]]; then
+    __log_debug "$target"
+    if [ "${2:-none}" != "none" ]; then
+      __log_info "Auto-Commit $target with message \"$2\""
+      git -C $target add .
+      git -C $target commit -m "$2"
+      git -C $target push
+    fi
+  fi
+}
+
+_sync() {
+    if [ -z "$1" ]; then
+      return
+    fi
+
+    echo "# $1"
+    
+    # __log_info "syncing $1"
+
+    (
+      export target=$1
+      export target=${target//$'\n'/} # Remove all newlines.
+      export target=${target%$'\n'}   # Remove a trailing newline.
+      export target=${target//$'\r'/} # Remove all newlines.
+      export target=${target%$'\r'}   # Remove a trailing newline.
+
+      # echo "# sync $target"
+
+      __parse $target
+      message=""
+      full_dir="${WORK_WORKSPACES_PATH}/${git_host}/${git_path%.*}"
+      parent_dir=$(dirname $full_dir)
+
+      mkdir -p $parent_dir
+      # __log_info "full_dir=$full_dir"
+      if [ ! -d "$full_dir" ]; then
+        # __log_info "cloning ${target} (into $parent_dir)"
+        git -C "${parent_dir}" clone --quiet "$target"
+
+        message="cloned"
+      else
+        # __log_info "fetching ${target} (from $full_dir)"
+        # git -C "${full_dir}" fetch --quiet
+        # __log_info "pulling ${target} (from $full_dir)"
+        git -C "${full_dir}" pull --quiet
+        message="pulled"
+      fi
+      __log_info "${message}: ${target} in ${full_dir}"
+      # __xclip ${full_dir}
+    )
+
+}
+
+_sync-gitlab-namespaces-byid() {
+
+  GITLAB_BASE_URL="$1"
+  shift
+  namespace_ids="$@"
+
+  __log_debug "GITLAB_BASE_URL=$GITLAB_BASE_URL"
+  __log_debug "namespace_ids=$namespace_ids"
+
+  _sync_list() {
+    projects=$(echo "$1" | jq -r ".[].ssh_url_to_repo")
+    while read ssh_url_to_repo
+    do
+      (_sync "$ssh_url_to_repo")
+    done <<< "$projects"
+  }
+
+  _recursive() {
+    group_ids="$@"
+    for group_id in $group_ids
+    do
+      re='^[0-9]+$'
+      if ! [[ $group_id =~ $re ]] ; then
+        __log "using string $group_id"
+      else
+        group_id=$group_id
+      fi
+      group=$(__gitlab_api groups/$group_id)
+      # echo "group_id=$group_id name=$(echo $group | jq -r .name) web_url=$(echo $group | jq -r .web_url)"
+      projects=$(__gitlab_api groups/$group_id/projects?per_page=200)
+      (_sync_list "$(echo $projects)")
+      subgroups="$(__gitlab_api groups/$group_id/subgroups?per_page=200 | jq -r .)"
+      subgroups_ids="$(echo $subgroups | jq -c -r '[.[].id|tostring] | join(" ")')"
+      # echo "subgroups_ids=$(echo $subgroups | jq -c -r '[.[].id|tostring] | join(" ")')"
+      # echo "subgroups_names=$(echo $subgroups | jq -c -r '[.[].path] | join(" ")')"
+      (_recursive "$subgroups_ids")
+    done
+  }
+
+  _recursive $namespace_ids
+}
+
+_open(){
+  __parse $(git config remote.origin.url)
+  if [ "${1:-none}" == "none" ]; then
+    __open "$git_web_url"
+  else
+    __open "$git_web_url/$1"
+  fi
+}
+_web_url(){
+  __parse $(git config remote.origin.url)
+  if [ "${1:-none}" == "none" ]; then
+    __log_info "$git_web_url"
+  else
+    __log_info "$git_web_url/$1"
+  fi
+}
+
+_latest_version() {
+
+  if [ "$1" == "github.com" ]; then
+    curl -sLf -X GET -u $GITHUB_PERSONAL_TOKEN:x-oauth-basic "https://api.github.com/repos/$2/releases/latest" | jq -r .tag_name
+  fi
+
+}
+
+_help() {
+    echo "help !"
+}
+
+operation="${1:-none}"
+shift
+
+case "$operation" in
+    "code")
+      _sync $@
+      __parse $@
+      full_dir="${WORK_WORKSPACES_PATH}/${git_host}/${git_path%.*}"
+      # __log_info "open located at ${full_dir}"
+      # __log_info "open at ${full_dir}"
+      # code -r $full_dir
+      code $full_dir
+        ;;
+    "code-insiders")
+      _sync $@
+      __parse $@
+      full_dir="${WORK_WORKSPACES_PATH}/${git_host}/${git_path%.*}"
+      # __log_info "open located at ${full_dir}"
+      # __log_info "open at ${full_dir}"
+      # code -r $full_dir
+      code-insiders $full_dir
+        ;;
+    "atom")
+      _sync $@
+      __parse $@
+      full_dir="${WORK_WORKSPACES_PATH}/${git_host}/${git_path%.*}"
+      # __log_info "open located at ${full_dir}"
+      # __log_info "open at ${full_dir}"
+      # atom -a $full_dir
+      atom $full_dir
+        ;;
+    "sync")
+        _sync $@
+        ;;
+    "sync-gitlab-namespaces-byid")
+        # export GITLAB_BASE_URL="https://gitlab-ncsa.ubisoft.org"
+        _sync-gitlab-namespaces-byid $@
+        ;;
+    "sync-gitlab-namespaces-byname")
+        # echo "# TODO: implement"
+        # export GITLAB_BASE_URL="$1"
+        full_path=$1
+        IFS='/' read -r -a split_path_array <<< "$full_path"
+        split_path_array_length="${#split_path_array[@]}"
+        last_item="${split_path_array[$split_path_array_length-1]}"
+        # >&2 echo "# $full_path last_item=$last_item"
+        search_res=$(__gitlab_api "groups?search=$last_item" | jq -r .)
+        # >&2 echo "# search_res $full_path: $search_res"
+        namespace_id=$(__gitlab_api "groups?search=$last_item" | jq --arg full_path $full_path '[ .[] | select( .full_path | contains($full_path)) ] | .[0].id')
+
+        # >&2 echo "# $full_path namespace_id=$namespace_id"
+
+        if [ "$namespace_id" != "null" ]; then
+          __log ""
+          _sync-gitlab-namespaces-byid $GITLAB_BASE_URL $namespace_id
+        else
+          __log_error "${full_path} does not exist"
+        fi
+        ;;
+    "lastest-version")
+        _latest_version $@
+        ;;
+    "open")
+        _open $@
+        ;;
+    "web-url")
+        _web_url $@
+        ;;
+    "dir")
+        __parse $@
+        echo "${WORK_WORKSPACES_PATH}/${git_host}/${git_path%.*}"
+        ;;
+    "check")
+        target=$(realpath $1)
+        # if [ -z "$1" ]; then
+        #   target=$(realpath $PWD)
+        # else
+        #   target=$(realpath $1)
+        # fi
+        for d in $(find $target -name .git -type d -exec dirname {} \;)
+        do
+          _check_dir $d
+        done
+        ;;
+    "status")
+        if [ -z "$1" ]; then
+          target=$(realpath $PWD)
+        else
+          target=$(realpath $1)
+        fi
+        for d in $(find $target -name .git -type d -exec dirname {} \;)
+        do
+          _status_dir $d ${2:-none}
+        done
+        ;;
+    "parse")
+        if [ -z "$@" ]; then
+          target=$(git -C $PWD config remote.origin.url)
+        fi
+        LOG_LEVEL="debug" __parse $target 1
+        ;;
+    "remote-to-ssh")
+        if [ -z "$@" ]; then
+          argp=$PWD
+        else
+          argp=$1
+        fi
+        target=$(git -C $argp config remote.origin.url)
+        git_auth=${GIT_AUTH:-""}
+        if [ -z "$git_auth" ]; then
+          git_auth=""
+        else
+          git_auth="${git_auth}@"
+        fi
+        LOG_LEVEL="debug" __parse $target 1
+        # git@github.com:USERNAME/REPOSITORY.git
+        git_ssh_url="git@${git_host}:${git_path}.git"
+        LOG_LEVEL="debug" __log_debug "git_ssh_url=${git_ssh_url}"
+        git -C $argp remote set-url origin $git_ssh_url
+        ;;
+      "remote-to-https")
+        if [ -z "$@" ]; then
+          argp=$PWD
+        else
+          argp=$1
+        fi
+        target=$(git -C $argp config remote.origin.url)
+        git_auth=${GIT_AUTH:-""}
+        if [ -z "$git_auth" ]; then
+          git_auth=""
+        else
+          git_auth="${git_auth}@"
+        fi
+        LOG_LEVEL="debug" __parse $target 1
+        git_https_url="https://${git_auth}${git_host}/${git_path}.git"
+        LOG_LEVEL="debug" __log_debug "https_url=${git_https_url}"
+        git remote set-url origin $git_https_url
+        ;;
+    *)
+        _help
+        ;;
+esac
