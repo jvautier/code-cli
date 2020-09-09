@@ -354,7 +354,6 @@ case "$operation" in
         _sync $@
         ;;
     "sync-gitlab-namespaces-byid")
-        # export GITLAB_BASE_URL="https://gitlab-ncsa.ubisoft.org"
         _sync-gitlab-namespaces-byid $@
         ;;
     "sync-gitlab-namespaces-byname")
