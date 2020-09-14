@@ -7,4 +7,7 @@ tags:
   - cli
   - git
   - development
-github: {}
+github:
+  has_issues: true
+  has_projects: false
+  has_wiki: false
